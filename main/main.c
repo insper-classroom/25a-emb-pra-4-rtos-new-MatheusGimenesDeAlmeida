@@ -1,137 +1,148 @@
-/*
- * LED blink with FreeRTOS
- */
-#include <FreeRTOS.h>
-#include <task.h>
-#include <semphr.h>
-#include <queue.h>
+#include <stdio.h>
+#include "pico/stdlib.h"
+#include "hardware/gpio.h"
+#include "hardware/timer.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
 
 #include "ssd1306.h"
 #include "gfx.h"
 
-#include "pico/stdlib.h"
-#include <stdio.h>
+// Definições
+const int TRIGGER_PIN=16;
+const int ECHO_PIN=17;
 
-const uint BTN_1_OLED = 28;
-const uint BTN_2_OLED = 26;
-const uint BTN_3_OLED = 27;
+const int vel_som=0.0343f;
 
-const uint LED_1_OLED = 20;
-const uint LED_2_OLED = 21;
-const uint LED_3_OLED = 22;
+const int dist_max=400;
 
-void oled1_btn_led_init(void) {
-    gpio_init(LED_1_OLED);
-    gpio_set_dir(LED_1_OLED, GPIO_OUT);
+// Filas 
+static QueueHandle_t xQueueTime     = NULL; 
+static QueueHandle_t xQueueDistance = NULL; 
 
-    gpio_init(LED_2_OLED);
-    gpio_set_dir(LED_2_OLED, GPIO_OUT);
+// Interrupção no pino ECHO para capturar bordas de subida e descida.
+void pin_callback(uint gpio, uint32_t events) {
+    //armazena o tempo das bordas
+    static uint64_t start_time_us = 0;
+    
+    if (gpio == ECHO_PIN) {
+        uint64_t now_us = time_us_64();
 
-    gpio_init(LED_3_OLED);
-    gpio_set_dir(LED_3_OLED, GPIO_OUT);
-
-    gpio_init(BTN_1_OLED);
-    gpio_set_dir(BTN_1_OLED, GPIO_IN);
-    gpio_pull_up(BTN_1_OLED);
-
-    gpio_init(BTN_2_OLED);
-    gpio_set_dir(BTN_2_OLED, GPIO_IN);
-    gpio_pull_up(BTN_2_OLED);
-
-    gpio_init(BTN_3_OLED);
-    gpio_set_dir(BTN_3_OLED, GPIO_IN);
-    gpio_pull_up(BTN_3_OLED);
-}
-
-void oled1_demo_1(void *p) {
-    printf("Inicializando Driver\n");
-    ssd1306_init();
-
-    printf("Inicializando GLX\n");
-    ssd1306_t disp;
-    gfx_init(&disp, 128, 32);
-
-    printf("Inicializando btn and LEDs\n");
-    oled1_btn_led_init();
-
-    char cnt = 15;
-    while (1) {
-
-        if (gpio_get(BTN_1_OLED) == 0) {
-            cnt = 15;
-            gpio_put(LED_1_OLED, 0);
-            gfx_clear_buffer(&disp);
-            gfx_draw_string(&disp, 0, 0, 1, "LED 1 - ON");
-            gfx_show(&disp);
-        } else if (gpio_get(BTN_2_OLED) == 0) {
-            cnt = 15;
-            gpio_put(LED_2_OLED, 0);
-            gfx_clear_buffer(&disp);
-            gfx_draw_string(&disp, 0, 0, 1, "LED 2 - ON");
-            gfx_show(&disp);
-        } else if (gpio_get(BTN_3_OLED) == 0) {
-            cnt = 15;
-            gpio_put(LED_3_OLED, 0);
-            gfx_clear_buffer(&disp);
-            gfx_draw_string(&disp, 0, 0, 1, "LED 3 - ON");
-            gfx_show(&disp);
-        } else {
-
-            gpio_put(LED_1_OLED, 1);
-            gpio_put(LED_2_OLED, 1);
-            gpio_put(LED_3_OLED, 1);
-            gfx_clear_buffer(&disp);
-            gfx_draw_string(&disp, 0, 0, 1, "PRESSIONE ALGUM");
-            gfx_draw_string(&disp, 0, 10, 1, "BOTAO");
-            gfx_draw_line(&disp, 15, 27, cnt,
-                          27);
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if (++cnt == 112)
-                cnt = 15;
-
-            gfx_show(&disp);
+        if (events & GPIO_IRQ_EDGE_RISE) {
+            start_time_us = now_us;
+        }
+        // Borda de descida: envia o delta para a fila xQueueTime
+        else if (events & GPIO_IRQ_EDGE_FALL) {
+            uint64_t delta_us = now_us - start_time_us;
+            // Envia de forma não-bloqueante (from ISR)
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            xQueueSendFromISR(xQueueTime, &delta_us, &xHigherPriorityTaskWoken);
+            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
     }
 }
 
-void oled1_demo_2(void *p) {
-    printf("Inicializando Driver\n");
-    ssd1306_init();
+// trigger_task
+void trigger_task(void *pvParameters) {
+    const TickType_t xDelay = pdMS_TO_TICKS(1000); 
+    while (true) {
+        gpio_put(TRIGGER_PIN, 1);
+        sleep_us(10);
+        gpio_put(TRIGGER_PIN, 0);
 
-    printf("Inicializando GLX\n");
-    ssd1306_t disp;
-    gfx_init(&disp, 128, 32);
-
-    printf("Inicializando btn and LEDs\n");
-    oled1_btn_led_init();
-
-    char cnt = 15;
-    while (1) {
-
-        gfx_clear_buffer(&disp);
-        gfx_draw_string(&disp, 0, 0, 1, "Mandioca");
-        gfx_show(&disp);
-        vTaskDelay(pdMS_TO_TICKS(150));
-
-        gfx_clear_buffer(&disp);
-        gfx_draw_string(&disp, 0, 0, 2, "Batata");
-        gfx_show(&disp);
-        vTaskDelay(pdMS_TO_TICKS(150));
-
-        gfx_clear_buffer(&disp);
-        gfx_draw_string(&disp, 0, 0, 4, "Inhame");
-        gfx_show(&disp);
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(xDelay);
     }
 }
 
-int main() {
-    stdio_init_all();
+// echo_task 
+//lê o delta de tempo do pulso e converte em distância, depois envia para xQueueDistance
+void echo_task(void *pvParameters) {
+    uint64_t delta_us;
+    float distance_cm;
 
-    xTaskCreate(oled1_demo_2, "Demo 2", 4095, NULL, 1, NULL);
+    while (true) {
+        if (xQueueReceive(xQueueTime, &delta_us, portMAX_DELAY) == pdTRUE) {
+            distance_cm = (delta_us * vel_som) / 2.0f;
+
+            if (distance_cm > dist_max) {
+                distance_cm = -1.0f;  
+            }
+            xQueueSend(xQueueDistance, &distance_cm, 0);
+        }
+    }
+}
+
+//  oled_task 
+void oled_task(void *pvParameters) {
+    ssd1306_t disp;
+    ssd1306_init();
+    gfx_init(&disp, 128, 32);
+
+    float distance_cm;
+    char buffer[32];
+    int contador_falhas = 0;
+    const int maximo_falha = 3;
+
+    while (true) {
+        if (xQueueReceive(xQueueDistance, &distance_cm, portMAX_DELAY) == pdTRUE) {
+            gfx_clear_buffer(&disp);
+
+            if (distance_cm < 0) {
+                contador_falhas++;
+                if (contador_falhas >= maximo_falha) {
+                    gfx_draw_string(&disp, 0, 0, 1, "Sensor Falhou");
+                } else {
+                    gfx_draw_string(&disp, 0, 0, 1, "Falha na leitura");
+                }
+            } else {
+                contador_falhas = 0;
+                snprintf(buffer, sizeof(buffer), "Dist: %.1f cm", distance_cm);
+                gfx_draw_string(&disp, 0, 0, 1, buffer);
+
+                int bar_width = (int)((distance_cm / 100.0f) * 128);
+                if (bar_width > 128) bar_width = 128;
+                if (bar_width < 0)   bar_width = 0;
+
+                gfx_draw_line(&disp, 0, 20, bar_width, 20);
+            }
+            gfx_show(&disp);
+        }
+    }
+}
+ 
+int main(void) {
+    stdio_init_all();
+    sleep_ms(2000); 
+
+    gpio_init(TRIGGER_PIN);
+    gpio_set_dir(TRIGGER_PIN, GPIO_OUT);
+    gpio_put(TRIGGER_PIN, 0);
+
+    gpio_init(ECHO_PIN);
+    gpio_set_dir(ECHO_PIN, GPIO_IN);
+    gpio_set_pulls(ECHO_PIN, false, true); 
+
+    gpio_set_irq_enabled_with_callback(
+        ECHO_PIN,
+        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL,
+        true,
+        pin_callback
+    );
+
+    xQueueTime = xQueueCreate(5, sizeof(uint64_t));
+    xQueueDistance = xQueueCreate(5, sizeof(float));
+
+    xTaskCreate(trigger_task, "TriggerTask", 256, NULL, 1, NULL);
+    xTaskCreate(echo_task,    "EchoTask",    256, NULL, 1, NULL);
+    xTaskCreate(oled_task,    "OledTask",   4096, NULL, 1, NULL);
 
     vTaskStartScheduler();
 
-    while (true)
-        ;
+    while (1) {
+        tight_loop_contents();
+    }
+    return 0;
 }
