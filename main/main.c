@@ -50,7 +50,8 @@ void trigger_task(void *pvParameters) {
     const TickType_t xDelay = pdMS_TO_TICKS(1000); 
     while (true) {
         gpio_put(TRIGGER_PIN, 1);
-        sleep_us(10);
+        vTaskDelay(xDelay);
+
         gpio_put(TRIGGER_PIN, 0);
 
         vTaskDelay(xDelay);
