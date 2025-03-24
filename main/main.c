@@ -25,11 +25,11 @@ static QueueHandle_t xQueueDistance = NULL;
 
 // Interrupção no pino ECHO para capturar bordas de subida e descida.
 void pin_callback(uint gpio, uint32_t events) {
-    //armazena o tempo das bordas
-    static uint64_t start_time_us = 0;
-    
+    //armazena o tempo das bordas    
     if (gpio == ECHO_PIN) {
         uint64_t now_us = time_us_64();
+        static uint64_t start_time_us;
+
 
         if (events & GPIO_IRQ_EDGE_RISE) {
             start_time_us = now_us;
